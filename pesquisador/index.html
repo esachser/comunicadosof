@@ -1,0 +1,122 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta http-equiv="X-UA-Compatible" content="IE=edge">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <link rel="stylesheet" href="https://cdn.simplecss.org/simple.min.css">
+    <title>Pesquisador de Informes do OpenFinance Brasil</title>
+    <script>
+        window.onload = () => {
+            const upd = localStorage.getItem('informesUpdate');
+            let mustUpdate = true;
+            
+            if (upd !== undefined) {
+                try {
+                    const informes = JSON.parse(localStorage.getItem('informes'));
+                    const updTime = new Date(parseInt(upd, 10));
+                    updTime.setMinutes(updTime.getMinutes() + 10);
+                    const n = Date.now();
+                    if (n < updTime.valueOf()) {
+                        mustUpdate = false;
+                        console.log('Não vai atualizar informes');
+                        window.comunicadosof = informes;
+                        const ipt = document.getElementById('txtPesquisa');
+                        ipt.disabled = false;
+                        ipt.placeholder = 'Pesquisa';
+                    }
+                } catch(err) {}
+            }
+            if (mustUpdate) {
+                console.log('Vai atualizar informes');
+                fetch('https://informesofbr.s3.sa-east-1.amazonaws.com/informes.json')
+                    .then((r) => {
+                        if (r.status !== 200) {
+                            throw Error(`Status diferente de 200: ${r.status}`);
+                        }
+
+                        return r.json();
+                    })
+                    .then((js) => {
+                        console.log('Informes recebidos com sucesso');
+                        localStorage.setItem('informes', JSON.stringify(js));
+                        localStorage.setItem('informesUpdate', Date.now().toString());
+                        window.comunicadosof = js;
+                        const ipt = document.getElementById('txtPesquisa');
+                        ipt.disabled = false;
+                        ipt.placeholder = 'Pesquisa';
+                    })
+                    .catch((err) => {
+                        console.error('Erro ao buscar informes: ', err);
+                    });
+            }
+        }
+        const searcher = (p) => window.comunicadosof?.map(inf => ({ ...inf, idx: inf.Informe.search(p) })).filter(inf => inf.Numero === p || inf.idx >= 0) || [];
+        function search(evt) {
+            const divRes = document.getElementById('results');
+            while (divRes.firstChild) {
+                divRes.removeChild(divRes.lastChild);
+            }
+            if (evt.value.length > 1) {
+                const rgx = new RegExp(evt.value, 'i');
+                const results = searcher(rgx);
+                for (let index = 0; index < results.length; index++) {
+                    const element = results[index];
+                    const dvr = document.createElement('tr');
+                    const dvTitle = document.createElement('a');
+                    dvTitle.style.display = 'block';
+                    dvTitle.style.overflow = 'auto';
+                    dvTitle.style.height = '100%';
+                    dvTitle.style.textAlign = 'center';
+                    dvTitle.style.border = 'none';
+                    dvTitle.target = '_blank';
+                    dvTitle.rel = 'noreferrer noopener';
+                    dvTitle.href = element.Link;
+                    dvTitle.innerText = `Informe ${element.Numero}`;
+                    const parte = element.Informe.substring(Math.max(0, element.idx - 30), Math.min(element.idx + 60, element.Informe.length))
+                    const dvp = document.createElement('td');
+                    dvp.innerText = "... " + parte + " ...";
+                    const dvi = document.createElement('td');
+                    dvi.appendChild(dvTitle);
+                    dvi.style.height = '100%';
+
+                    dvr.appendChild(dvi);
+                    dvr.appendChild(dvp);
+                    divRes.appendChild(dvr);
+                }
+            }
+        }
+    </script>
+    <style>
+        #body {
+            width: 100%;
+        }
+
+        #txtPesquisa {
+            width: 100%;
+        }
+    </style>
+</head>
+
+<body>
+    <header>
+        <h2>
+            Pesquisador de Informes do Open Finance Brasil
+        </h2>
+    </header>
+    <main id="body">
+        Chave de pesquisa:
+        <div>
+            <input type="text" placeholder="Carregando informes..." size="100" id="txtPesquisa" onkeyup="search(this);"
+                disabled>
+        </div>
+        Resultados:
+        <table id="results"></table>
+    </main>
+    <footer>
+        Eduardo Sachser - 2022
+    </footer>
+</body>
+
+</html>
