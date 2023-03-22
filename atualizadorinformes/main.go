@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -18,6 +19,27 @@ import (
 	"github.com/esachser/comunicadosof"
 )
 
+func getInformes2() ([]string, error) {
+	res, err := http.Get("https://openfinancebrasil.atlassian.net/wiki/plugins/viewsource/viewpagesrc.action?pageId=17367115")
+	if err != nil {
+		return nil, err
+	}
+
+	defer res.Body.Close()
+	if res.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("status code inesperado: %d", res.StatusCode)
+	}
+
+	doc, err := goquery.NewDocumentFromReader(res.Body)
+	if err != nil {
+		return nil, err
+	}
+
+	return doc.Find("body > table > tbody > tr > td > p > a").Map(func(i int, s *goquery.Selection) string {
+		return s.AttrOr("href", "")
+	}), nil
+}
+
 func getInformes() ([]string, error) {
 	res, err := http.Get("https://openfinancebrasil.atlassian.net/wiki/plugins/viewsource/viewpagesrc.action?pageId=17367115")
 	if err != nil {
@@ -26,7 +48,7 @@ func getInformes() ([]string, error) {
 
 	defer res.Body.Close()
 	if res.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("Status code inesperado: %d", res.StatusCode)
+		return nil, fmt.Errorf("status code inesperado: %d", res.StatusCode)
 	}
 
 	doc, err := goquery.NewDocumentFromReader(res.Body)
@@ -47,13 +69,57 @@ func getInformeText(link string) (string, error) {
 
 	defer res.Body.Close()
 	if res.StatusCode != http.StatusOK {
-		return "", fmt.Errorf("Status code inesperado: %d", res.StatusCode)
+		return "", fmt.Errorf("status code inesperado: %d", res.StatusCode)
 	}
 
 	builder := strings.Builder{}
 	err = outputHtmlText(res.Body, &builder)
 
-	return builder.String(), nil
+	return builder.String(), err
+}
+
+func getInformeTitleAndText(link string) (string, string, error) {
+	res, err := http.Get(link)
+	if err != nil {
+		return "", "", err
+	}
+
+	defer res.Body.Close()
+	if res.StatusCode != http.StatusOK {
+		return "", "", fmt.Errorf("status code inesperado: %d", res.StatusCode)
+	}
+
+	builder := strings.Builder{}
+	bts, err := io.ReadAll(res.Body)
+	if err != nil {
+		return "", "", err
+	}
+	err = outputHtmlText(bytes.NewReader(bts), &builder)
+	if err != nil {
+		return "", "", err
+	}
+	text := builder.String()
+
+	builder = strings.Builder{}
+	err = outputHtmlTitle(bytes.NewReader(bts), &builder)
+	if err != nil {
+		return "", "", err
+	}
+	title := builder.String()
+
+	return title, text, nil
+}
+
+func outputHtmlTitle(f io.Reader, w io.Writer) error {
+	doc, err := goquery.NewDocumentFromReader(f)
+	if err != nil {
+		return err
+	}
+
+	doc.Find("head > title").Each(func(i int, s *goquery.Selection) {
+		fmt.Fprint(w, s.Text())
+	})
+	return nil
 }
 
 func outputHtmlText(f io.Reader, w io.Writer) error {
@@ -108,7 +174,7 @@ func getobject() (string, error) {
 	informeNumero, _ := strconv.Atoi(informe.Numero)
 	fmt.Printf("Último informe presente: %d\n", informeNumero)
 
-	informesList, err := getInformes()
+	informesList, err := getInformes2()
 	if err != nil {
 		return "", nil
 	}
@@ -120,22 +186,32 @@ func getobject() (string, error) {
 	fmt.Fprintln(result, "[")
 	for _, inf := range informesList {
 		fmt.Println(inf)
-		splt := strings.Split(inf, " ")
-		link := splt[0]
-		text := strings.Join(splt[1:], " ")
+		// splt := strings.Split(inf, " ")
+		link := inf
+
+		fmt.Printf("Capturando informe em %s\n", link)
+		text, infText, err := getInformeTitleAndText(link)
+		if err != nil {
+			return "", err
+		}
+
+		fmt.Printf("Informe: %s\n", text)
+
 		ns := rgxNumeroInforme.FindString(text)
 		if len(ns) < 2 {
-			return "", errors.New("Não foi possível processar os informes")
+			return "", errors.New("não foi possível processar os informes")
 		}
 		n, _ := strconv.Atoi(ns[1:])
 		fmt.Printf("Processando informe #%d\n", n)
 		if n <= informeNumero {
 			break
 		}
-		fmt.Printf("Capturando dados do informe #%d em %s\n", n, link)
-		infText, err := getInformeText(link)
-		if err != nil {
-			return "", err
+		if len(infText) == 0 {
+			fmt.Printf("Capturando dados do informe #%d em %s\n", n, link)
+			infText, err = getInformeText(link)
+			if err != nil {
+				return "", err
+			}
 		}
 
 		bts, _ := json.Marshal(comunicadosof.Informe{Link: link, Numero: ns[1:], Informe: infText})
